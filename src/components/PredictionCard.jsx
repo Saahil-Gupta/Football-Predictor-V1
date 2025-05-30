@@ -7,20 +7,20 @@ export default function PredictionCard({ prediction, loading }) {
     }
 
     return (
-        <div className="mt-6 bg-laliga-yellow text-center rounded-2xl py-6 px-4 shadow-xl animate-slide-in">
+        <div className="mt-6 bg-white border-t-4 border-[#E30613] text-center rounded-2xl py-6 px-4 shadow-lg animate-slide-in">
             {loading ? (
-                <p className="text-lg font-semibold text-purple-800">Loading prediction...</p>
+                <p className="text-lg font-semibold text-gray-600">Loading prediction...</p>
             ) : (
                 <>
-                    <h3 className="text-xl font-bold text-purple-900 mb-4">Predicted Winner</h3>
-                    <div className="flex justify-center items-center gap-4">
+                    <div className="flex justify-center items-center mb-4">
                         <img
                             src={teamLogos[prediction]}
                             alt={prediction}
-                            className="w-12 h-12 rounded-full shadow-md"
+                            className="w-16 h-16 rounded-full shadow-md border-2 border-[#E30613]"
                         />
-                        <p className="text-2xl font-bold text-purple-950">{prediction}</p>
                     </div>
+                    <h3 className="text-2xl font-bold text-gray-800 mb-2">Predicted Winner</h3>
+                    <p className="text-3xl font-extrabold text-[#E30613]">{prediction}</p>
                 </>
             )}
         </div>

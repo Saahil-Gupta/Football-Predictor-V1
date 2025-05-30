@@ -1,5 +1,3 @@
-# mongodb+srv://spambot4673:<Saahil2005>@cluster0.owdizxw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0
-
 import os
 import pandas as pd
 from pymongo import MongoClient

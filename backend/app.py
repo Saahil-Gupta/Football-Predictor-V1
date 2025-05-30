@@ -1,16 +1,16 @@
 import os
 from dotenv import load_dotenv
-from flask import Flask, render_template, request
-import sqlite3
+from flask import Flask, jsonify
+from flask_cors import CORS
 import requests
 import joblib
 from datetime import datetime
 import numpy as np
 import unicodedata
-import pandas as pd
 import random
 
-# === Team Mapping ===
+# === Team Mapping & Static Team List ===
+# Map API names to model/DB names
 TEAM_NAME_MAP = {
     "Deportivo Alavés": "Alaves",
     "Almeria": "Almeria",
@@ -43,186 +43,132 @@ TEAM_NAME_MAP = {
     "Villarreal CF": "Villarreal"
 }
 
+# Static list of La Liga teams with their API IDs and display names
+STATIC_TEAMS = [
+    {"id": 81,  "name": "Barcelona"},
+    {"id": 86,  "name": "Real Madrid"},
+    {"id": 78,  "name": "Atletico Madrid"},
+    {"id": 77,  "name": "Athletic Club"},
+    {"id": 94,  "name": "Villarreal"},
+    {"id": 90,  "name": "Betis"},
+    {"id": 558, "name": "Celta Vigo"},
+    {"id": 87,  "name": "Rayo Vallecano"},
+    {"id": 79,  "name": "Osasuna"},
+    {"id": 89,  "name": "Mallorca"},
+    {"id": 92,  "name": "Real Sociedad"},
+    {"id": 95,  "name": "Valencia"},
+    {"id": 82,  "name": "Getafe"},
+    {"id": 80,  "name": "Espanyol"},
+    {"id": 263, "name": "Alaves"},
+    {"id": 298, "name": "Girona"},
+    {"id": 559, "name": "Sevilla"},
+    {"id": 745, "name": "Leganes"},
+    {"id": 275, "name": "Las Palmas"},
+    {"id": 250, "name": "Valladolid"}
+]
 
-# === Load Environment and App ===
+# === Load Environment & Initialize ===
 load_dotenv()
 app = Flask(__name__)
-API_TOKEN = os.getenv("FOOTBALL_API_KEY")
+CORS(app)
+
+API_TOKEN = os.getenv('FOOTBALL_API_KEY')
 API_URL = 'https://api.football-data.org/v4'
 CACHE = {}
 
-# === Load Models ===
+# === Load ML models & strengths ===
 model = joblib.load("match_predictor_advanced.pkl")
 le_team = joblib.load("team_label_encoder.pkl")
 TEAM_STRENGTHS = joblib.load("team_strengths.pkl")
 
 # === Helper Functions ===
 def normalize_team_name(name):
-    name = TEAM_NAME_MAP.get(name, name)
-    return unicodedata.normalize("NFKD", name).encode("ASCII", "ignore").decode("utf-8").strip()
+    mapped = TEAM_NAME_MAP.get(name, name)
+    return unicodedata.normalize("NFKD", mapped).encode("ASCII", "ignore").decode("utf-8").strip()
 
-
-def get_teams():
-    conn = sqlite3.connect('la_liga.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT id, name FROM teams ORDER BY name')
-    teams = cursor.fetchall()
-    conn.close()
-    return teams
-
-def is_cache_valid(cache_time, seconds=60):
-    return (datetime.utcnow() - cache_time).total_seconds() < seconds
-
-def format_date_nice(utc_string):
-    dt = datetime.strptime(utc_string, "%Y-%m-%dT%H:%M:%SZ")
-    day = dt.day
-    suffix = lambda d: 'th' if 11 <= d <= 13 else {1: 'st', 2: 'nd', 3: 'rd'}.get(d % 10, 'th')
-    return f"{day}{suffix(day)} {dt.strftime('%B')}"
 
 def predict_match(home_team, away_team):
     home = normalize_team_name(home_team)
     away = normalize_team_name(away_team)
-
     if home not in TEAM_STRENGTHS or away not in TEAM_STRENGTHS:
-        print(f"Unknown team(s): {home} / {away}")
         return None, None
-
     h = TEAM_STRENGTHS[home]
     a = TEAM_STRENGTHS[away]
-
-    strength_score = (h["offense_strength"] - a["defense_weakness"]) - (a["offense_strength"] - h["defense_weakness"])
+    score = (h['offense_strength'] - a['defense_weakness']) - (a['offense_strength'] - h['defense_weakness'])
     noise = random.uniform(-0.1, 0.1)
-    total_score = strength_score + noise
-
-    if total_score > 0.15:
-        return "Home Win", [0.75, 0.15, 0.1]
-    elif total_score < -0.15:
-        return "Away Win", [0.1, 0.15, 0.75]
+    total = score + noise
+    if total > 0.15:
+        return 'Home Win', [0.75, 0.15, 0.1]
+    elif total < -0.15:
+        return 'Away Win', [0.1, 0.15, 0.75]
     else:
-        return "Draw", [0.25, 0.5, 0.25]
+        return 'Draw', [0.25, 0.5, 0.25]
 
 
-# === API Integration ===
-def get_next_fixture(team_id):
+def is_cache_valid(ts, seconds=60):
+    return (datetime.now() - ts).total_seconds() < seconds
+
+
+def format_date_nice(utc):
+    dt = datetime.strptime(utc, "%Y-%m-%dT%H:%M:%SZ")
+    day = dt.day
+    suffix = 'th' if 11 <= day <= 13 else {1:'st',2:'nd',3:'rd'}.get(day % 10, 'th')
+    return f"{day}{suffix} {dt.strftime('%B')}"
+
+# === API Routes ===
+@app.route('/api/teams', methods=['GET'])
+def api_teams():
+    return jsonify(STATIC_TEAMS)
+
+@app.route('/api/fixtures/next/<int:team_id>', methods=['GET'])
+def api_next(team_id):
     key = f"{team_id}_next"
-    if key in CACHE and is_cache_valid(CACHE[key]["time"]):
-        return CACHE[key]["data"]
+    if key in CACHE and is_cache_valid(CACHE[key]['time'], seconds=300):
+        return jsonify(CACHE[key]['data'])
     headers = {'X-Auth-Token': API_TOKEN}
-    url = f"{API_URL}/teams/{team_id}/matches?status=SCHEDULED&limit=10"
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        matches = response.json().get('matches', [])
-        la_liga_matches = [m for m in matches if m["competition"]["name"] == "Primera Division"]
-        for match in la_liga_matches:
-            match["formatted_date"] = format_date_nice(match["utcDate"])
-            pred, proba = predict_match(match["homeTeam"]["name"], match["awayTeam"]["name"])
-            if pred:
-                match["prediction"] = f"{pred} (Conf: {max(proba)*100:.1f}%)"
-        first_match = la_liga_matches[0:1]
-        CACHE[key] = {"data": first_match, "time": datetime.utcnow()}
-        return first_match
-    return []
+    res = requests.get(f"{API_URL}/teams/{team_id}/matches?status=SCHEDULED&limit=5", headers=headers)
+    fixtures = []
+    if res.status_code == 200:
+        for m in res.json().get('matches', []):
+            if m['competition']['name'] != 'Primera Division': continue
+            pred, proba = predict_match(m['homeTeam']['name'], m['awayTeam']['name'])
+            fixtures.append({
+                'utcDate': m['utcDate'],
+                'home': m['homeTeam']['name'],
+                'away': m['awayTeam']['name'],
+                'prediction': {
+                    'result': pred,
+                    'confidence': proba
+                }
+            })
+        CACHE[key] = {'data': fixtures, 'time': datetime.now()}
+    return jsonify(fixtures)
 
-def get_last_fixtures(team_id):
+@app.route('/api/fixtures/last/<int:team_id>', methods=['GET'])
+def api_last(team_id):
     key = f"{team_id}_last"
-    if key in CACHE and is_cache_valid(CACHE[key]["time"]):
-        return CACHE[key]["data"]
+    if key in CACHE and is_cache_valid(CACHE[key]['time'], seconds=300):
+        return jsonify(CACHE[key]['data'])
     headers = {'X-Auth-Token': API_TOKEN}
-    url = f"{API_URL}/teams/{team_id}/matches?status=FINISHED&limit=20"
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        matches = response.json().get('matches', [])
-        la_liga_matches = [m for m in matches if m["competition"]["name"] == "Primera Division"]
-        la_liga_matches.sort(key=lambda x: x["utcDate"], reverse=True)
-        last_five = la_liga_matches[:5]
-        for match in last_five:
-            match["formatted_date"] = format_date_nice(match["utcDate"])
-        CACHE[key] = {"data": last_five, "time": datetime.utcnow()}
-        return last_five
-    return []
+    res = requests.get(f"{API_URL}/teams/{team_id}/matches?status=FINISHED&limit=5", headers=headers)
+    results = []
+    if res.status_code == 200:
+        for m in sorted(res.json().get('matches', []), key=lambda x: x['utcDate'], reverse=True):
+            if m['competition']['name'] != 'Primera Division': continue
+            ft = m['score']['fullTime']
+            pred, proba = predict_match(m['homeTeam']['name'], m['awayTeam']['name'])
+            results.append({
+                'utcDate': m['utcDate'],
+                'home': m['homeTeam']['name'],
+                'away': m['awayTeam']['name'],
+                'score': {'home': ft['home'], 'away': ft['away']},
+                'prediction': {
+                    'result': pred,
+                    'confidence': proba
+                }
+            })
+        CACHE[key] = {'data': results, 'time': datetime.now()}
+    return jsonify(results)
 
-def get_latest_matchday_fixtures():
-    key = "latest_matchday"
-    if key in CACHE and is_cache_valid(CACHE[key]["time"], seconds=600):
-        return CACHE[key]["data"], CACHE[key]["matchday"]
-    headers = {'X-Auth-Token': API_TOKEN}
-    url = f"{API_URL}/competitions/2014/matches"
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        matches = response.json().get("matches", [])
-        if not matches:
-            return [], None
-        latest_matchday = max(m["matchday"] for m in matches if m["matchday"] is not None)
-        url_latest = f"{API_URL}/competitions/2014/matches?matchday={latest_matchday}"
-        r2 = requests.get(url_latest, headers=headers)
-        if r2.status_code == 200:
-            week_matches = r2.json().get("matches", [])
-            for m in week_matches:
-                m["formatted_date"] = format_date_nice(m["utcDate"])
-                pred, proba = predict_match(m["homeTeam"]["name"], m["awayTeam"]["name"])
-                if pred:
-                    m["prediction"] = f"{pred} (Conf: {max(proba)*100:.1f}%)"
-            week_matches.sort(key=lambda x: x["utcDate"], reverse=True)
-            CACHE[key] = {"data": week_matches, "time": datetime.utcnow(), "matchday": latest_matchday}
-            return week_matches, latest_matchday
-    return [], None
-
-# === Routes ===
-@app.route('/', methods=['GET', 'POST'])
-def index():
-    teams = get_teams()
-    selected_team = None
-    next_fixture = []
-    last_fixtures = []
-    matchday_fixtures, latest_matchday = get_latest_matchday_fixtures()
-
-    if request.method == 'POST':
-        team_id = request.form.get('team')
-        if team_id:
-            selected_team = team_id
-            next_fixture = get_next_fixture(team_id)
-            last_fixtures = get_last_fixtures(team_id)
-
-            if next_fixture:
-                for match in next_fixture:
-                    home = match["homeTeam"]["name"]
-                    away = match["awayTeam"]["name"]
-                    pred, _ = predict_match(home, away)
-                    match["prediction"] = prediction_label(pred, home, away)
-
-            if last_fixtures:
-                for match in last_fixtures:
-                    home = match["homeTeam"]["name"]
-                    away = match["awayTeam"]["name"]
-                    pred, _ = predict_match(home, away)
-                    match["prediction"] = prediction_label(pred, home, away)
-
-    if matchday_fixtures:
-        for match in matchday_fixtures:
-            home = match["homeTeam"]["name"]
-            away = match["awayTeam"]["name"]
-            pred, _ = predict_match(home, away)
-            match["prediction"] = prediction_label(pred, home, away)
-
-    return render_template('index.html',
-                           teams=teams,
-                           selected_team=selected_team,
-                           next_fixture=next_fixture,
-                           last_fixtures=last_fixtures,
-                           matchday_fixtures=matchday_fixtures,
-                           latest_matchday=latest_matchday)
-
-def prediction_label(pred, home, away):
-    if pred == "Home Win":
-        return f"{home} to win"
-    elif pred == "Away Win":
-        return f"{away} to win"
-    elif pred == "Draw":
-        return "Draw"
-    else:
-        return "Unavailable"
-
-
-# === Run Server ===
 if __name__ == '__main__':
     app.run(debug=True)
