@@ -35,7 +35,7 @@ export default {
     'CD Leganés': leganes,
     'RCD Mallorca': mallorca,
     'CA Osasuna': osasuna,
-    'Rayo Vallecano': rayoVallecano,
+    'Rayo Vallecano de Madrid': rayoVallecano,
     'Real Madrid CF': realMadrid,
     'Real Sociedad de Fútbol': realSociedad,
     'Sevilla FC': sevilla,

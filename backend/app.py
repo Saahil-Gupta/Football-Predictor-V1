@@ -115,6 +115,70 @@ def format_date_nice(utc):
     suffix = 'th' if 11 <= day <= 13 else {1:'st',2:'nd',3:'rd'}.get(day % 10, 'th')
     return f"{day}{suffix} {dt.strftime('%B')}"
 
+
+def get_latest_matchday_fixtures():
+    """
+        Queries the Football‐Data API to find the highest (latest) matchday in La Liga,
+        then returns a tuple: (list_of_fixture_dicts, latest_matchday_number).
+        Each fixture dict includes:
+        - 'utcDate'
+        - 'homeTeam': { 'name': … }
+        - 'awayTeam': { 'name': … }
+        - 'score': { 'fullTime': { 'home': X, 'away': Y } }
+        - 'prediction': { 'result': …, 'confidence': […] }
+        - 'formatted_date': e.g. '25th May'
+    """
+    API_URL = 'https://api.football-data.org/v4'
+    headers = {'X-Auth-Token': API_TOKEN}
+
+    # 1) Get all La Liga matches to discover the highest matchday
+    resp_all = requests.get(f"{API_URL}/competitions/2014/matches", headers=headers)
+    if resp_all.status_code != 200:
+        return [], None
+
+    all_matches = resp_all.json().get("matches", [])
+    # Only consider those with a non‐null matchday
+    matchday_numbers = [m["matchday"] for m in all_matches if m.get("matchday") is not None]
+    if not matchday_numbers:
+        return [], None
+
+    latest_md = max(matchday_numbers)
+
+    # 2) Now query specifically for that latest matchday
+    resp_md = requests.get(f"{API_URL}/competitions/2014/matches?matchday={latest_md}", headers=headers)
+    if resp_md.status_code != 200:
+        return [], latest_md
+
+    md_matches = resp_md.json().get("matches", [])
+    result_list = []
+
+    for m in md_matches:
+        # Filter only Primera Division (in case the endpoint returns other comps)
+        if m.get("competition", {}).get("name") != "Primera Division":
+            continue
+
+        # Prepare score object (full‐time). If not available yet, default to dashes.
+        ft = m.get("score", {}).get("fullTime", {"home": "-", "away": "-"})
+
+        # Run your existing prediction logic
+        pred, conf = predict_match(m["homeTeam"]["name"], m["awayTeam"]["name"])
+        # Build the fixture‐dict exactly as front end expects:
+        fixture = {
+            "utcDate": m["utcDate"],
+            "homeTeam": {"name": m["homeTeam"]["name"]},
+            "awayTeam": {"name": m["awayTeam"]["name"]},
+            "score": {"fullTime": {"home": ft.get("home"), "away": ft.get("away")}},
+            "prediction": {
+                "result": pred,            # e.g. "Home Win" / "Draw" / "Away Win"
+                "confidence": conf or []   # your model’s [0.7,0.15,0.15], etc.
+            },
+            "formatted_date": format_date_nice(m["utcDate"])
+        }
+        result_list.append(fixture)
+
+    return result_list, latest_md
+
+
 # === API Routes ===
 @app.route('/api/teams', methods=['GET'])
 def api_teams():
@@ -169,6 +233,18 @@ def api_last(team_id):
             })
         CACHE[key] = {'data': results, 'time': datetime.now()}
     return jsonify(results)
+
+
+@app.route('/api/fixtures/matchday', methods=['GET'])
+def api_matchday():
+    # This calls your existing helper:
+    fixtures, matchday_num = get_latest_matchday_fixtures()
+    # Return both the matchday number and the array of fixture objects
+    return jsonify({
+        "matchday": matchday_num,
+        "fixtures": fixtures
+    })
+
 
 if __name__ == '__main__':
     app.run(debug=True)
