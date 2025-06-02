@@ -51,17 +51,17 @@ import React from 'react';
 export default function TeamSelector({ label, teams, selectedTeam, onChange }) {
     return (
         <div className="mb-6 text-left">
-            <label className="block mb-2 text-lg font-semibold text-[#AEB6C9]">
+            <label className="block mb-2 text-lg font-semibold text-gray-800">
                 {label}
             </label>
             <select
                 value={selectedTeam}
                 onChange={(e) => onChange(e.target.value)}
-                className="w-full px-4 py-3 bg-white border-t-4 border-[#313445] rounded-lg shadow-md font-medium text-gray-800"
+                className="w-full px-4 py-3 bg-white border-t-4 border-red-600 rounded-lg shadow-md font-medium text-gray-800"
             >
-                <option value="" className="text-[#AEB6C9]">-- Select Team --</option>
+                <option value="" className="text-black">-- Select Team --</option>
                 {teams.map((team) => (
-                    <option key={team.id} value={team.id} className="text-[#AEB6C9]">
+                    <option key={team.id} value={team.id} className="text-black">
                         {team.name}
                     </option>
                 ))}

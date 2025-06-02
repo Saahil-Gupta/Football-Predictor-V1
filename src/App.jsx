@@ -124,7 +124,7 @@ export default function App() {
                 {/* ────────────────────────────────────────────────────────── */}
 
                 {/* Team Selector */}
-                <div className="bg-white rounded-2xl shadow p-8 mb-10">
+                <div className="bg-white rounded-2xl shadow p-8 mb-10 border-t-4 border-red-600">
                     <TeamSelector
                         label="Select Team"
                         teams={teams}
