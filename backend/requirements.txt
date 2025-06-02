@@ -1,4 +1,4 @@
-﻿attrs==25.3.0
+attrs==25.3.0
 beautifulsoup4==4.13.4
 certifi==2025.4.26
 cffi==1.17.1
@@ -31,7 +31,13 @@ urllib3==2.4.0
 webdriver-manager==4.0.2
 websocket-client==1.8.0
 wsproto==1.2.0
+
+# Flask backend essentials
 flask
 gunicorn
 flask-cors
+python-dotenv
 
+# ML and joblib
+joblib
+scikit-learn
