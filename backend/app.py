@@ -1,9 +1,9 @@
 import os
 from dotenv import load_dotenv
-from flask import Flask, jsonify
-from flask_cors import CORS
+from flask import Flask, jsonify , send_from_directory
+from flask_cors import CORS 
 import requests
-import joblib
+import joblib 
 from datetime import datetime
 import numpy as np
 import unicodedata
@@ -69,7 +69,8 @@ STATIC_TEAMS = [
 
 # === Load Environment & Initialize ===
 load_dotenv()
-app = Flask(__name__)
+app = Flask(__name__, static_folder='frontend_back/dist', static_url_path='')
+# app = Flask(__name__)
 CORS(app)
 
 API_TOKEN = os.getenv('FOOTBALL_API_KEY')
@@ -180,6 +181,18 @@ def get_latest_matchday_fixtures():
 
 
 # === API Routes ===
+@app.route('/')
+def index():
+    return send_from_directory(app.static_folder, 'index.html')
+
+@app.route('/<path:path>')
+def serve_static(path):
+    file_path = os.path.join(app.static_folder, path)
+    if os.path.exists(file_path):
+        return send_from_directory(app.static_folder, path)
+    else:
+        return send_from_directory(app.static_folder, 'index.html')
+
 @app.route('/api/teams', methods=['GET'])
 def api_teams():
     return jsonify(STATIC_TEAMS)
