@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import TeamSelector from './TeamSelector.jsx';
 import teamLogos from '../assets/teamLogos.js';
+import Header from './Header.jsx';
 
 export default function LaLigaPrediction() {
     const [teams, setTeams] = useState([]);
@@ -42,6 +43,8 @@ export default function LaLigaPrediction() {
     }, [teamId]);
 
     return (
+        <div>
+            <Header />
             <div className="min-h-screen bg-gray-50 p-8">
                 <div className="max-w-4xl mx-auto">
                     <h1 className="text-4xl font-extrabold text-gray-800 mb-8 text-center">
@@ -301,5 +304,6 @@ export default function LaLigaPrediction() {
                     </div>
                 </div>
             </div>
+        </div>    
         );
 }

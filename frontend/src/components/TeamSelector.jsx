@@ -57,7 +57,7 @@ export default function TeamSelector({ label, teams, selectedTeam, onChange }) {
             <select
                 value={selectedTeam}
                 onChange={(e) => onChange(e.target.value)}
-                className="w-full px-4 py-3 bg-white border-t-4 border-red-600 rounded-lg shadow-md font-medium text-gray-800"
+                className="w-full px-4 py-3 bg-white border-4 border-t-violet-600 border-r-violet-600 border-b-red-600 border-l-red-600 rounded-lg shadow-md font-medium text-gray-800"
             >
                 <option value="" className="text-black">-- Select Team --</option>
                 {teams.map((team) => (

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import TeamSelector from "./TeamSelector.jsx";
-import teamLogos from "../assets/teamLogos.js"; // Make sure EPL team logos are included!
+import teamLogos from "../assets/teamLogos.js";
+import Header from "../components/Header.jsx" // Make sure EPL team logos are included!
 
 export default function EPLPrediction() {
     const [teams, setTeams] = useState([]);
@@ -97,6 +98,8 @@ export default function EPLPrediction() {
     };
 
     return (
+        <div>
+            <Header />
         <div className="min-h-screen bg-gray-50 p-8">
         <div className="max-w-4xl mx-auto">
             <h1 className="text-4xl font-extrabold text-gray-800 mb-8 text-center">⚽ EPL Predictor</h1>
@@ -169,5 +172,6 @@ export default function EPLPrediction() {
             </div>
         </div>
         </div>
+    </div>
     );
 }
