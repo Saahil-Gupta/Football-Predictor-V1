@@ -24,3 +24,8 @@ dist-ssr
 
 pyvenv.cfg
 .env
+backend/Lib
+backend\Scripts
+backend/Include
+backend/pyvenv.cfg
+backend/csv-database 
