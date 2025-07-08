@@ -62,9 +62,15 @@ STATIC_TEAMS = [
     {"id": 263, "name": "Alaves"},
     {"id": 298, "name": "Girona"},
     {"id": 559, "name": "Sevilla"},
-    {"id": 745, "name": "Leganes"},
-    {"id": 275, "name": "Las Palmas"},
-    {"id": 250, "name": "Valladolid"}
+    {"id": 88, "name": "Levante UD"},
+    {"id": 285, "name": "Elche CF"},
+    {"id": 1048, "name": "Real Oviedo"}
+
+    #got relegated
+    #{"id": 745, "name": "Leganes"},
+    #{"id": 275, "name": "Las Palmas"},
+    #{"id": 250, "name": "Valladolid"},
+    
 ]
 
 # === Load Environment & Initialize ===
