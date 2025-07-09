@@ -1,16 +1,39 @@
 import os
 from dotenv import load_dotenv
-from flask import Flask, jsonify , send_from_directory
-from flask_cors import CORS 
+from flask import Flask, jsonify, send_from_directory, request
+from flask_cors import CORS
 import requests
-import joblib 
+import joblib
 from datetime import datetime
 import numpy as np
 import unicodedata
 import random
 
-# === Team Mapping & Static Team List ===
-# Map API names to model/DB names
+# === Load Environment ===
+load_dotenv()
+API_TOKEN = os.getenv('FOOTBALL_API_KEY')
+API_URL = 'https://api.football-data.org/v4'
+CACHE = {}
+
+# === Flask App Init ===
+app = Flask(__name__, static_folder='frontend_back/dist', static_url_path='')
+CORS(app)
+
+# === Load Models for Both Leagues ===
+MODELS = {
+    "laliga": {
+        "model": joblib.load("match_predictor_advanced.pkl"),
+        "encoder": joblib.load("team_label_encoder.pkl"),
+        "strengths": joblib.load("team_strengths.pkl")
+    },
+    "prem": {
+        "model": joblib.load("epl_match_predictor_advanced.pkl"),
+        "encoder": joblib.load("epl_team_label_encoder.pkl"),
+        "strengths": joblib.load("epl_team_strengths.pkl")
+    }
+}
+
+# === Team Mapping ===
 TEAM_NAME_MAP = {
     "Deportivo Alavés": "Alaves",
     "Almeria": "Almeria",
@@ -40,11 +63,48 @@ TEAM_NAME_MAP = {
     "Sevilla FC": "Sevilla",
     "Valencia CF": "Valencia",
     "Real Valladolid CF": "Valladolid",
-    "Villarreal CF": "Villarreal"
+    "Villarreal CF": "Villarreal",
+
+    # Premier League
+    "Arsenal": "Arsenal FC",
+    "Aston Villa": "Aston Villa FC",
+    "Bournemouth": "AFC Bournemouth",
+    "Brentford": "Brentford FC",
+    "Brighton": "Brighton & Hove Albion FC",
+    "Burnley": "Burnley FC",
+    "Cardiff": "Cardiff City FC",
+    "Chelsea": "Chelsea FC",
+    "Crystal Palace": "Crystal Palace FC",
+    "Everton": "Everton FC",
+    "Fulham": "Fulham FC",
+    "Huddersfield": "Huddersfield Town AFC",
+    "Hull": "Hull City AFC",
+    "Ipswich": "Ipswich Town FC",
+    "Leeds": "Leeds United FC",
+    "Leicester": "Leicester City FC",
+    "Liverpool": "Liverpool FC",
+    "Luton": "Luton Town FC",
+    "Manchester City": "Manchester City FC",
+    "Manchester United": "Manchester United FC",
+    "Middlesbrough": "Middlesbrough FC",
+    "Newcastle United": "Newcastle United FC",
+    "Norwich": "Norwich City FC",
+    "Nottingham Forest": "Nottingham Forest FC",
+    "Sheffield United": "Sheffield United FC",
+    "Southampton": "Southampton FC",
+    "Stoke": "Stoke City FC",
+    "Sunderland": "Sunderland AFC",
+    "Swansea": "Swansea City AFC",
+    "Tottenham": "Tottenham Hotspur FC",
+    "Watford": "Watford FC",
+    "West Bromwich Albion": "West Bromwich Albion FC",
+    "West Ham": "West Ham United FC",
+    "Wolverhampton Wanderers": "Wolverhampton Wanderers FC"
 }
 
-# Static list of La Liga teams with their API IDs and display names
+# === Static Team List ===
 STATIC_TEAMS = [
+    # La Liga
     {"id": 81,  "name": "Barcelona"},
     {"id": 86,  "name": "Real Madrid"},
     {"id": 78,  "name": "Atletico Madrid"},
@@ -62,48 +122,66 @@ STATIC_TEAMS = [
     {"id": 263, "name": "Alaves"},
     {"id": 298, "name": "Girona"},
     {"id": 559, "name": "Sevilla"},
-    {"id": 88, "name": "Levante UD"},
-    {"id": 285, "name": "Elche CF"},
-    {"id": 1048, "name": "Real Oviedo"}
 
-    #got relegated
-    #{"id": 745, "name": "Leganes"},
-    #{"id": 275, "name": "Las Palmas"},
-    #{"id": 250, "name": "Valladolid"},
-    
+    # Premier League
+    {"id": 57, "name": "Arsenal"},
+    {"id": 58, "name": "Aston Villa"},
+    {"id": 1044, "name": "AFC Bournemouth"},
+    {"id": 402, "name": "Brentford FC"},
+    {"id": 397, "name": "Brighton & Hove Albion FC"},
+    {"id": 328, "name": "Burnley FC"},
+    {"id": 68, "name": "Chelsea"},
+    {"id": 354, "name": "Crystal Palace"},
+    {"id": 62, "name": "Everton"},
+    {"id": 63, "name": "Fulham FC"},
+    {"id": 340, "name": "Huddersfield Town AFC"},
+    {"id": 322, "name": "Hull City AFC"},
+    {"id": 68, "name": "Ipswich Town FC"},  # Note: if not in API file, adjust or remove
+    {"id": 341, "name": "Leeds United FC"},
+    {"id": 338, "name": "Leicester City FC"},
+    {"id": 64, "name": "Liverpool"},
+    {"id": 389, "name": "Luton Town FC"},
+    {"id": 65, "name": "Manchester City"},
+    {"id": 66, "name": "Manchester United"},
+    {"id": 343, "name": "Middlesbrough FC"},
+    {"id": 67, "name": "Newcastle United"},
+    {"id": 70, "name": "Norwich City FC"},
+    {"id": 351, "name": "Nottingham Forest FC"},
+    {"id": 356, "name": "Sheffield United FC"},
+    {"id": 340, "name": "Southampton FC"},
+    {"id": 236, "name": "Stoke City FC"},
+    {"id": 71, "name": "Sunderland AFC"},
+    {"id": 72, "name": "Swansea City AFC"},
+    {"id": 73, "name": "Tottenham Hotspur"},
+    {"id": 346, "name": "Watford FC"},
+    {"id": 74, "name": "West Bromwich Albion"},
+    {"id": 563, "name": "West Ham United FC"},
+    {"id": 76, "name": "Wolverhampton Wanderers"}
 ]
 
-# === Load Environment & Initialize ===
-load_dotenv()
-app = Flask(__name__, static_folder='frontend_back/dist', static_url_path='')
-# app = Flask(__name__)
-CORS(app)
-
-API_TOKEN = os.getenv('FOOTBALL_API_KEY')
-API_URL = 'https://api.football-data.org/v4'
-CACHE = {}
-
-# === Load ML models & strengths ===
-model = joblib.load("match_predictor_advanced.pkl")
-le_team = joblib.load("team_label_encoder.pkl")
-TEAM_STRENGTHS = joblib.load("team_strengths.pkl")
-
-# === Helper Functions ===
+# === Utility Functions ===
 def normalize_team_name(name):
     mapped = TEAM_NAME_MAP.get(name, name)
     return unicodedata.normalize("NFKD", mapped).encode("ASCII", "ignore").decode("utf-8").strip()
 
-
 def predict_match(home_team, away_team):
     home = normalize_team_name(home_team)
     away = normalize_team_name(away_team)
-    if home not in TEAM_STRENGTHS or away not in TEAM_STRENGTHS:
+
+    league = None
+    if home in MODELS["laliga"]["strengths"] and away in MODELS["laliga"]["strengths"]:
+        league = "laliga"
+    elif home in MODELS["prem"]["strengths"] and away in MODELS["prem"]["strengths"]:
+        league = "prem"
+    else:
         return None, None
-    h = TEAM_STRENGTHS[home]
-    a = TEAM_STRENGTHS[away]
+
+    h = MODELS[league]["strengths"][home]
+    a = MODELS[league]["strengths"][away]
+
     score = (h['offense_strength'] - a['defense_weakness']) - (a['offense_strength'] - h['defense_weakness'])
-    noise = random.uniform(-0.1, 0.1)
-    total = score + noise
+    total = score + random.uniform(-0.1, 0.1)
+
     if total > 0.15:
         return 'Home Win', [0.75, 0.15, 0.1]
     elif total < -0.15:
@@ -111,10 +189,8 @@ def predict_match(home_team, away_team):
     else:
         return 'Draw', [0.25, 0.5, 0.25]
 
-
 def is_cache_valid(ts, seconds=60):
     return (datetime.now() - ts).total_seconds() < seconds
-
 
 def format_date_nice(utc):
     dt = datetime.strptime(utc, "%Y-%m-%dT%H:%M:%SZ")
@@ -122,71 +198,7 @@ def format_date_nice(utc):
     suffix = 'th' if 11 <= day <= 13 else {1:'st',2:'nd',3:'rd'}.get(day % 10, 'th')
     return f"{day}{suffix} {dt.strftime('%B')}"
 
-
-def get_latest_matchday_fixtures():
-    """
-        Queries the Football‐Data API to find the highest (latest) matchday in La Liga,
-        then returns a tuple: (list_of_fixture_dicts, latest_matchday_number).
-        Each fixture dict includes:
-        - 'utcDate'
-        - 'homeTeam': { 'name': … }
-        - 'awayTeam': { 'name': … }
-        - 'score': { 'fullTime': { 'home': X, 'away': Y } }
-        - 'prediction': { 'result': …, 'confidence': […] }
-        - 'formatted_date': e.g. '25th May'
-    """
-    API_URL = 'https://api.football-data.org/v4'
-    headers = {'X-Auth-Token': API_TOKEN}
-
-    # 1) Get all La Liga matches to discover the highest matchday
-    resp_all = requests.get(f"{API_URL}/competitions/2014/matches", headers=headers)
-    if resp_all.status_code != 200:
-        return [], None
-
-    all_matches = resp_all.json().get("matches", [])
-    # Only consider those with a non‐null matchday
-    matchday_numbers = [m["matchday"] for m in all_matches if m.get("matchday") is not None]
-    if not matchday_numbers:
-        return [], None
-
-    latest_md = max(matchday_numbers)
-
-    # 2) Now query specifically for that latest matchday
-    resp_md = requests.get(f"{API_URL}/competitions/2014/matches?matchday={latest_md}", headers=headers)
-    if resp_md.status_code != 200:
-        return [], latest_md
-
-    md_matches = resp_md.json().get("matches", [])
-    result_list = []
-
-    for m in md_matches:
-        # Filter only Primera Division (in case the endpoint returns other comps)
-        if m.get("competition", {}).get("name") != "Primera Division":
-            continue
-
-        # Prepare score object (full‐time). If not available yet, default to dashes.
-        ft = m.get("score", {}).get("fullTime", {"home": "-", "away": "-"})
-
-        # Run your existing prediction logic
-        pred, conf = predict_match(m["homeTeam"]["name"], m["awayTeam"]["name"])
-        # Build the fixture‐dict exactly as front end expects:
-        fixture = {
-            "utcDate": m["utcDate"],
-            "homeTeam": {"name": m["homeTeam"]["name"]},
-            "awayTeam": {"name": m["awayTeam"]["name"]},
-            "score": {"fullTime": {"home": ft.get("home"), "away": ft.get("away")}},
-            "prediction": {
-                "result": pred,            # e.g. "Home Win" / "Draw" / "Away Win"
-                "confidence": conf or []   # your model’s [0.7,0.15,0.15], etc.
-            },
-            "formatted_date": format_date_nice(m["utcDate"])
-        }
-        result_list.append(fixture)
-
-    return result_list, latest_md
-
-
-# === API Routes ===
+# === API Endpoints ===
 @app.route('/')
 def index():
     return send_from_directory(app.static_folder, 'index.html')
@@ -205,7 +217,8 @@ def api_teams():
 
 @app.route('/api/fixtures/next/<int:team_id>', methods=['GET'])
 def api_next(team_id):
-    key = f"{team_id}_next"
+    league = request.args.get('league', 'laliga')
+    key = f"{team_id}_next_{league}"
     if key in CACHE and is_cache_valid(CACHE[key]['time'], seconds=300):
         return jsonify(CACHE[key]['data'])
     headers = {'X-Auth-Token': API_TOKEN}
@@ -213,7 +226,8 @@ def api_next(team_id):
     fixtures = []
     if res.status_code == 200:
         for m in res.json().get('matches', []):
-            if m['competition']['name'] != 'Primera Division': continue
+            if league == 'laliga' and m['competition']['code'] != 'PD': continue
+            if league == 'prem' and m['competition']['code'] != 'PL': continue
             pred, proba = predict_match(m['homeTeam']['name'], m['awayTeam']['name'])
             fixtures.append({
                 'utcDate': m['utcDate'],
@@ -229,7 +243,8 @@ def api_next(team_id):
 
 @app.route('/api/fixtures/last/<int:team_id>', methods=['GET'])
 def api_last(team_id):
-    key = f"{team_id}_last"
+    league = request.args.get('league', 'laliga')
+    key = f"{team_id}_last_{league}"
     if key in CACHE and is_cache_valid(CACHE[key]['time'], seconds=300):
         return jsonify(CACHE[key]['data'])
     headers = {'X-Auth-Token': API_TOKEN}
@@ -237,7 +252,8 @@ def api_last(team_id):
     results = []
     if res.status_code == 200:
         for m in sorted(res.json().get('matches', []), key=lambda x: x['utcDate'], reverse=True):
-            if m['competition']['name'] != 'Primera Division': continue
+            if league == 'laliga' and m['competition']['code'] != 'PD': continue
+            if league == 'prem' and m['competition']['code'] != 'PL': continue
             ft = m['score']['fullTime']
             pred, proba = predict_match(m['homeTeam']['name'], m['awayTeam']['name'])
             results.append({
@@ -252,18 +268,6 @@ def api_last(team_id):
             })
         CACHE[key] = {'data': results, 'time': datetime.now()}
     return jsonify(results)
-
-
-@app.route('/api/fixtures/matchday', methods=['GET'])
-def api_matchday():
-    # This calls your existing helper:
-    fixtures, matchday_num = get_latest_matchday_fixtures()
-    # Return both the matchday number and the array of fixture objects
-    return jsonify({
-        "matchday": matchday_num,
-        "fixtures": fixtures
-    })
-
 
 if __name__ == '__main__':
     app.run(debug=True)
