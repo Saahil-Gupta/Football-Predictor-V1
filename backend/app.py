@@ -136,7 +136,7 @@ STATIC_TEAMS = [
     {"id": 63, "name": "Fulham FC"},
     {"id": 340, "name": "Huddersfield Town AFC"},
     {"id": 322, "name": "Hull City AFC"},
-    {"id": 68, "name": "Ipswich Town FC"},  # Note: if not in API file, adjust or remove
+    {"id": 68, "name": "Ipswich Town FC"}, 
     {"id": 341, "name": "Leeds United FC"},
     {"id": 338, "name": "Leicester City FC"},
     {"id": 64, "name": "Liverpool"},
