@@ -3,8 +3,8 @@ import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 
 import LoadingScreen from "./components/LoadingScreen.jsx";
 import Home from "./components/Home.jsx";
-import LaLigaPrediction from "./components/LaLigaPrediction.jsx";
-import EPLPrediction from "./components/EPLPrediction.jsx";
+import LaLigaPrediction from "./pages/LaLigaPrediction.jsx";
+import EPLPrediction from "./pages/EPLPrediction.jsx";
 
 export default function App() {
     const [isLoading, setIsLoading] = useState(true);
@@ -38,6 +38,7 @@ export default function App() {
             <Route path="/" element={<Home />} />
             <Route path="/laliga" element={<LaLigaPrediction />} />
             <Route path="/epl" element={<EPLPrediction />} />
+            <Route path="*" element={<div className="text-center p-8 text-2xl">404 – Page Not Found 😢</div>} />
             {/* You can add a 404 route later if needed */}
         </Routes>
         </Router>
