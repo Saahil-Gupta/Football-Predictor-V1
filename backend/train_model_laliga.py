@@ -122,32 +122,46 @@ df["away_defense_weakness"] = df["away_team"].apply(lambda t: get_strength(t, "d
 df["home_xg"] = df["home_offense_strength"] * (df["away_defense_weakness"] / 2)
 df["away_xg"] = df["away_offense_strength"] * (df["home_defense_weakness"] / 2)
 
-# === Recent form ===
-recent_form = {}
-def generate_team_stats(df, team_col, goals_for_col, goals_against_col, xg_col, role):
-    stats = []
+# === Generate and limit recent form to last 3 matches per team ===
+def generate_recent_form(df):
     records = {}
     for _, row in df.iterrows():
-        team = row[team_col]
-        gf, ga, xg = row[goals_for_col], row[goals_against_col], row.get(xg_col, 0)
-        history = records.get(team, [])
-        last3 = history[-3:]
-        stats.append({
-            f"{role}_recent_points": sum(m["points"] for m in last3),
-            f"{role}_recent_gd": sum(m["gf"] - m["ga"] for m in last3),
-            f"{role}_recent_avg_xg": sum(m["xg"] for m in last3) / len(last3) if last3 else 0
-        })
-        pt = 3 if gf > ga else 1 if gf == ga else 0
-        history.append({"gf": gf, "ga": ga, "xg": xg, "points": pt})
-        records[team] = history
-        recent_form[team] = history
-    return pd.DataFrame(stats)
+        # Home team
+        h_team = row["home_team"]
+        h_gf = row["home_goals"]
+        h_ga = row["away_goals"]
+        h_xg = row.get("home_xg", 0)
+        h_points = 3 if h_gf > h_ga else 1 if h_gf == h_ga else 0
+        h_history = records.get(h_team, [])
+        h_history.append({"gf": h_gf, "ga": h_ga, "xg": h_xg, "points": h_points})
+        records[h_team] = h_history[-3:]
 
-df = pd.concat([
-    df,
-    generate_team_stats(df, "home_team", "home_goals", "away_goals", "home_xg", "home"),
-    generate_team_stats(df, "away_team", "away_goals", "home_goals", "away_xg", "away")
-], axis=1)
+        # Away team
+        a_team = row["away_team"]
+        a_gf = row["away_goals"]
+        a_ga = row["home_goals"]
+        a_xg = row.get("away_xg", 0)
+        a_points = 3 if a_gf > a_ga else 1 if a_gf == a_ga else 0
+        a_history = records.get(a_team, [])
+        a_history.append({"gf": a_gf, "ga": a_ga, "xg": a_xg, "points": a_points})
+        records[a_team] = a_history[-3:]
+    return records
+
+recent_form = generate_recent_form(df)
+
+# === Add recent form features to df ===
+def get_recent_stats(team):
+    history = recent_form.get(team, [])
+    points = sum(m["points"] for m in history)
+    gd = sum(m["gf"] - m["ga"] for m in history)
+    avg_xg = sum(m["xg"] for m in history) / len(history) if history else 0
+    return points, gd, avg_xg
+
+df["home_recent_points"], df["home_recent_gd"], df["home_recent_avg_xg"] = zip(*df["home_team"].apply(get_recent_stats))
+df["away_recent_points"], df["away_recent_gd"], df["away_recent_avg_xg"] = zip(*df["away_team"].apply(get_recent_stats))
+
+with open("laliga_recent_form.pkl", "wb") as f:
+    pickle.dump(recent_form, f)
 
 # === Head-to-head ===
 def calculate_head_to_head(df, home_col, away_col, result_col):
@@ -168,7 +182,10 @@ h2h_results = calculate_head_to_head(df, "home_team", "away_team", "result")
 df["home_wins_vs_away"] = df.apply(lambda r: h2h_results.get((r["home_team"], r["away_team"]), {}).get("home_wins", 0), axis=1)
 df["away_wins_vs_home"] = df.apply(lambda r: h2h_results.get((r["away_team"], r["home_team"]), {}).get("away_wins", 0), axis=1)
 
-# === Final features (NO rest days) ===
+with open("laliga_h2h_results.pkl", "wb") as f:
+    pickle.dump(h2h_results, f)
+
+# === Features for model ===
 features = [
     "home_xg", "away_xg",
     "home_team_enc", "away_team_enc", "matchday",
@@ -194,9 +211,5 @@ print(f"\\La Liga Model Trained. Accuracy: {acc:.2%}")
 # === Save ===
 joblib.dump(model, "laliga_match_predictor_advanced.pkl")
 joblib.dump(le_team, "laliga_team_label_encoder.pkl")
-with open("laliga_recent_form.pkl", "wb") as f:
-    pickle.dump(recent_form, f)
-with open("laliga_h2h_results.pkl", "wb") as f:
-    pickle.dump(h2h_results, f)
 
 print("Saved: model, encoder, strengths, recent_form, h2h")

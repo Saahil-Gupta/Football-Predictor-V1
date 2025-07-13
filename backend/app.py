@@ -19,6 +19,12 @@ CACHE = {}
 app = Flask(__name__, static_folder='frontend_back/dist', static_url_path='')
 CORS(app)
 
+laliga_model = joblib.load(r"C:\Users\maana\OneDrive\Desktop\University\Football-Predictor-V1-main\backend\laliga_match_predictor_advanced.pkl")
+print("La Liga model class order:", laliga_model.classes_)
+
+prem_model = joblib.load(r"C:\Users\maana\OneDrive\Desktop\University\Football-Predictor-V1-main\backend\epl_match_predictor_advanced.pkl")
+print("Premier League model class order:", prem_model.classes_)
+
 
 MODELS = {
     "laliga": {
@@ -146,13 +152,14 @@ def normalize_team_name(name):
     mapped = TEAM_NAME_MAP.get(name, name)
     return unicodedata.normalize("NFKD", mapped).encode("ASCII", "ignore").decode("utf-8").strip()
 
-def predict_match_with_model(home_team, away_team, return_features=False, verbose=False, matchday=None, league_hint="laliga"):
+def predict_match_with_model(home_team, away_team, return_features=True, verbose=False, matchday=None, league_hint="laliga"):
     import numpy as np
+    import pandas as pd
 
     home = normalize_team_name(home_team)
     away = normalize_team_name(away_team)
 
-    # Determine the league
+    # Determine league
     league = None
     if home in MODELS["laliga"]["strengths"] and away in MODELS["laliga"]["strengths"]:
         league = "laliga"
@@ -176,51 +183,50 @@ def predict_match_with_model(home_team, away_team, return_features=False, verbos
     h = strengths[home]
     a = strengths[away]
 
-    # Matchday
+    # Matchday logic with cache fallback
     if matchday is None:
-        _, matchday = get_latest_matchday_fixtures(league=league)
-        if verbose:
-            print(f"[Auto] Using matchday: {matchday}")
+        cache_key = f"matchday_{league}"
+        if cache_key in CACHE and is_cache_valid(CACHE[cache_key]['time']):
+            matchday = CACHE[cache_key]['data'].get("matchday", 0)
+        else:
+            matchday = 0  # fallback if nothing available
+            print(f"[WARN] matchday not provided and not cached for {home} vs {away}. Using default boost.")
 
-    # === Strength boost based on matchday ===
-    strength_boost = max(1.0, 2.0 - 0.3 * (matchday - 1))  # Matchday 1 = 2.0, 2 = 1.7, 3 = 1.4, 4 = 1.1, 5+ = 1.0
+    # Apply safe fallback strength boost
+    if matchday > 0:
+        strength_boost = max(1.0, 2.0 - 0.3 * (matchday - 1))
+    else:
+        strength_boost = 1.0
+
     if verbose:
         print(f"Team strength boost applied: {strength_boost:.2f}")
 
-    # Adjusted Expected goals with boosted team strength
     home_xg = (h["offense_strength"] * strength_boost) * ((a["defense_weakness"] * strength_boost) / 2)
     away_xg = (a["offense_strength"] * strength_boost) * ((h["defense_weakness"] * strength_boost) / 2)
 
     home_avg_xg = round(home_xg, 2)
     away_avg_xg = round(away_xg, 2)
 
-    # === Recent Form: Adjust window based on matchday ===
-    def get_recent_stats(team, xg):
+    # Recent form
+    def get_recent_stats(team, fallback_xg):
         recent_matches = recent_form.get(team, [])
-        if matchday == 1:
-            last_n = 0
-        elif matchday == 2:
-            last_n = 1
-        elif matchday == 3:
-            last_n = 2
-        else:
-            last_n = 3
-        last_matches = recent_matches[-last_n:] if last_n > 0 else []
+        last_n = max(0, min(matchday - 1, 3))
+        last_matches = recent_matches[-last_n:]
         pts = sum(m["points"] for m in last_matches) if last_matches else 0.0
         gd = sum(m["gf"] - m["ga"] for m in last_matches) if last_matches else 0.0
-        avg_xg = sum(m["gf"] for m in last_matches) / len(last_matches) if last_matches else xg
+        avg_xg = sum(m["gf"] for m in last_matches) / len(last_matches) if last_matches else fallback_xg
         return pts, gd, avg_xg
 
     home_points, home_gd, home_avg_xg_actual = get_recent_stats(home, home_avg_xg)
     away_points, away_gd, away_avg_xg_actual = get_recent_stats(away, away_avg_xg)
 
-    # === Head-to-head results ===
+    # Head-to-head
     h2h = h2h_results.get((home, away), {})
     rev_h2h = h2h_results.get((away, home), {})
     home_wins_vs_away = h2h.get("home_wins", 0)
     away_wins_vs_home = rev_h2h.get("away_wins", 0)
 
-    # === Final Feature Vector ===
+    # Final feature vector
     features = [
         home_xg, away_xg,
         home_enc, away_enc, matchday,
@@ -231,19 +237,26 @@ def predict_match_with_model(home_team, away_team, return_features=False, verbos
         a["offense_strength"], a["defense_weakness"]
     ]
 
-    features_array = np.array(features).reshape(1, -1)
-    raw_probs = model.predict_proba(features_array)[0]
-    predicted_result = ["Home Win", "Draw", "Away Win"][np.argmax(raw_probs)]
+    feature_names = [
+        "home_xg", "away_xg",
+        "home_team_enc", "away_team_enc", "matchday",
+        "home_recent_points", "home_recent_gd", "home_recent_avg_xg",
+        "away_recent_points", "away_recent_gd", "away_recent_avg_xg",
+        "home_wins_vs_away", "away_wins_vs_home",
+        "home_offense_strength", "home_defense_weakness",
+        "away_offense_strength", "away_defense_weakness"
+    ]
 
-    if verbose:
-        print("Prediction Features:")
-        print(f"Matchday: {matchday}")
-        print("Confidence Scores:", raw_probs.tolist())
+    features_df = pd.DataFrame([features], columns=feature_names)
+    raw_probs = model.predict_proba(features_df)[0]
+    predicted_result = model.classes_[np.argmax(raw_probs)]
 
     if return_features:
         return predicted_result, raw_probs.tolist(), home_avg_xg, away_avg_xg, features
     else:
         return predicted_result, raw_probs.tolist(), home_avg_xg, away_avg_xg
+
+
 
 
 def format_date_nice(utc):
@@ -254,8 +267,8 @@ def format_date_nice(utc):
 
 def get_latest_matchday_fixtures(league='laliga'):
     competition_id = {
-        'laliga': '2014',  # La Liga
-        'epl': '2021',      # Premier League (Football-Data.org)
+        'laliga': '2014',
+        'epl': '2021',
         'prem': '2021'
     }.get(league)
 
@@ -265,7 +278,6 @@ def get_latest_matchday_fixtures(league='laliga'):
 
     headers = {'X-Auth-Token': API_TOKEN}
 
-    # Step 1: Fetch competition info to get current matchday
     comp_url = f"https://api.football-data.org/v4/competitions/{competition_id}"
     comp_resp = requests.get(comp_url, headers=headers)
     if comp_resp.status_code != 200:
@@ -279,7 +291,6 @@ def get_latest_matchday_fixtures(league='laliga'):
 
     print(f"League: {league} | Matchday: {current_md}")
 
-    # Step 2: Fetch matches
     matches_url = f"https://api.football-data.org/v4/competitions/{competition_id}/matches?matchday={current_md}"
     matches_resp = requests.get(matches_url, headers=headers)
     if matches_resp.status_code != 200:
@@ -292,7 +303,11 @@ def get_latest_matchday_fixtures(league='laliga'):
     for m in matches:
         home = m["homeTeam"]["name"]
         away = m["awayTeam"]["name"]
-        pred, conf, home_xg, away_xg = predict_match_with_model(home, away, matchday=current_md)
+
+        # 5-value return unpacking
+        pred, conf, home_xg, away_xg, _ = predict_match_with_model(
+            home, away, matchday=current_md, return_features=True
+        )
 
         if pred == "Unknown":
             print(f"Skipping unknown prediction: {home} vs {away}")
@@ -322,7 +337,8 @@ def get_latest_matchday_fixtures(league='laliga'):
     return result_list, current_md
 
 
-def is_cache_valid(ts, seconds=60):
+
+def is_cache_valid(ts, seconds=300):
     return (datetime.now() - ts).total_seconds() < seconds
 
 @app.route('/')
@@ -350,21 +366,33 @@ def api_next(team_id):
     league = request.args.get("league", "laliga")
     key = f"{team_id}_next_{league}"
     if key in CACHE and is_cache_valid(CACHE[key]['time']):
+        print(f"[CACHE HIT] /api/fixtures/next/{team_id}?league={league}")
         return jsonify(CACHE[key]['data'])
+
+    print(f"[API CALL] /api/fixtures/next/{team_id}?league={league}")
+
+    _, latest_matchday = get_latest_matchday_fixtures(league=league)
+    if latest_matchday is None:
+        return jsonify([])
 
     headers = {'X-Auth-Token': API_TOKEN}
     res = requests.get(f"{API_URL}/teams/{team_id}/matches?status=SCHEDULED&limit=5", headers=headers)
     fixtures = []
+
     if res.status_code == 200:
         for m in res.json().get("matches", []):
-            pred, proba, home_xg, away_xg = predict_match_with_model(m["homeTeam"]["name"], m["awayTeam"]["name"])
+            pred, proba, home_xg, away_xg, _ = predict_match_with_model(
+                m["homeTeam"]["name"], m["awayTeam"]["name"], matchday=latest_matchday
+            )
+            model = MODELS["laliga" if league == "laliga" else "prem"]["model"]
+            confidence = dict(zip(model.classes_, proba))
             fixtures.append({
                 "utcDate": m["utcDate"],
                 "home": m["homeTeam"]["name"],
                 "away": m["awayTeam"]["name"],
                 "prediction": {
                     "result": pred,
-                    "confidence": proba,
+                    "confidence": confidence,
                     "expected_goals": {
                         "home": home_xg,
                         "away": away_xg
@@ -374,19 +402,32 @@ def api_next(team_id):
         CACHE[key] = {"data": fixtures, "time": datetime.now()}
     return jsonify(fixtures)
 
+
 @app.route('/api/fixtures/last/<int:team_id>')
 def api_last(team_id):
     league = request.args.get("league", "laliga")
     key = f"{team_id}_last_{league}"
     if key in CACHE and is_cache_valid(CACHE[key]['time']):
+        print(f"[CACHE HIT] /api/fixtures/last/{team_id}?league={league}")
         return jsonify(CACHE[key]['data'])
+
+    print(f"[API CALL] /api/fixtures/last/{team_id}?league={league}")
+
+    _, latest_matchday = get_latest_matchday_fixtures(league=league)
+    if latest_matchday is None:
+        return jsonify([])
 
     headers = {'X-Auth-Token': API_TOKEN}
     res = requests.get(f"{API_URL}/teams/{team_id}/matches?status=FINISHED&limit=5", headers=headers)
     results = []
+
     if res.status_code == 200:
         for m in res.json().get("matches", []):
-            pred, proba, home_xg, away_xg = predict_match_with_model(m["homeTeam"]["name"], m["awayTeam"]["name"])
+            pred, proba, home_xg, away_xg, _ = predict_match_with_model(
+                m["homeTeam"]["name"], m["awayTeam"]["name"], matchday=latest_matchday
+            )
+            model = MODELS["laliga" if league == "laliga" else "prem"]["model"]
+            confidence = dict(zip(model.classes_, proba))
             ft = m["score"]["fullTime"]
             results.append({
                 "utcDate": m["utcDate"],
@@ -395,7 +436,7 @@ def api_last(team_id):
                 "score": ft,
                 "prediction": {
                     "result": pred,
-                    "confidence": proba,
+                    "confidence": confidence,
                     "expected_goals": {
                         "home": home_xg,
                         "away": away_xg
@@ -405,18 +446,38 @@ def api_last(team_id):
         CACHE[key] = {"data": results, "time": datetime.now()}
     return jsonify(results)
 
+
 @app.route('/api/fixtures/matchday', methods=['GET'])
 def api_matchday():
     league = request.args.get('league', 'laliga')
+    key = f"matchday_{league}"
+
+    if key in CACHE and is_cache_valid(CACHE[key]['time']):
+        print(f"[CACHE HIT] /api/fixtures/matchday?league={league}")
+        return jsonify(CACHE[key]['data'])
+
+    print(f"[API CALL] /api/fixtures/matchday?league={league}")
+
+    # This function already returns fixtures with predictions and formatted data
     fixtures, matchday_num = get_latest_matchday_fixtures(league=league)
-    return jsonify({
+
+    payload = {
         "matchday": matchday_num,
         "fixtures": fixtures
-    })
+    }
+
+    CACHE[key] = {
+        "data": payload,
+        "time": datetime.now()
+    }
+
+    return jsonify(payload)
+
+
 if __name__ == '__main__':
     if os.getenv("DEBUG_PREDICTION") == "1":
-        home_team = "Tottenham Hotspur FC"
-        away_team = "AFC Bournemouth"
+        home_team = "RCD Espanyol de Barcelona"
+        away_team = "Club Atlético de Madrid"
         result, confidence, home_xg, away_xg, features = predict_match_with_model(
             home_team, away_team, return_features=True, verbose=False
         )
@@ -458,3 +519,4 @@ if __name__ == '__main__':
 
     # Start Flask server
     app.run(debug=True)
+
