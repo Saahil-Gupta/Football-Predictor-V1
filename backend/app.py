@@ -19,10 +19,10 @@ CACHE = {}
 app = Flask(__name__, static_folder='frontend_back/dist', static_url_path='')
 CORS(app)
 
-laliga_model = joblib.load(r"C:\Users\maana\OneDrive\Desktop\University\Football-Predictor-V1-main\backend\laliga_match_predictor_advanced.pkl")
+laliga_model = joblib.load(r"laliga_match_predictor_advanced.pkl")
 print("La Liga model class order:", laliga_model.classes_)
 
-prem_model = joblib.load(r"C:\Users\maana\OneDrive\Desktop\University\Football-Predictor-V1-main\backend\epl_match_predictor_advanced.pkl")
+prem_model = joblib.load(r"epl_match_predictor_advanced.pkl")
 print("Premier League model class order:", prem_model.classes_)
 
 
