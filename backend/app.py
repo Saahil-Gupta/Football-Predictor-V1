@@ -355,7 +355,10 @@ def serve_static(path):
 
 @app.route('/api/epl/teams')
 def api_epl_teams():
-    return jsonify(STATIC_TEAMS[:20])
+    teams = [t for t in STATIC_TEAMS if normalize_team_name(t["name"]) in MODELS["prem"]["strengths"]]
+    print("Filtered EPL Teams:", [normalize_team_name(t['name']) for t in teams])
+    return jsonify(teams)
+
 
 @app.route('/api/laliga/teams')
 def api_laliga_teams():
