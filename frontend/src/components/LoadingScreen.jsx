@@ -3,8 +3,8 @@ import React, { useState, useEffect } from 'react';
 const defaultMessages = [
     "Calculating Mbappé's offsides...",
     "Counting the number of times Lamine Yamal cut inside...",
-    "Analyzing Vinícius Jr.'s dribbles...",
-    "Tallying Rodrygo's sprints...",
+    "Analyzing Savinho's dribbles...",
+    "Tallying Haaland's sprints...",
     "Measuring Pedri's touches..."
 ];
 
@@ -21,7 +21,7 @@ export default function LoadingScreen({ progress }) {
     return (
         <div className="fixed inset-0 bg-white flex flex-col items-center justify-center z-50">
             <div className="text-2xl font-semibold text-gray-700 mb-4">
-                Loading La Liga Data...
+                Loading Football Data...
             </div>
             <div className="overflow-hidden whitespace-nowrap w-full text-center mb-6 text-gray-500">
                 <div className="inline-block animate-marquee">

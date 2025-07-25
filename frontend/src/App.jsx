@@ -4,7 +4,7 @@ import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import LoadingScreen from "./components/LoadingScreen.jsx";
 import Home from "./components/Home.jsx";
 import LaLigaPrediction from "./pages/LaLigaPrediction.jsx";
-import EPLPrediction from "./pages/EPLPrediction.jsx";
+import EPLPrediction from "./pages/EplPrediction.jsx";
 
 export default function App() {
     const [isLoading, setIsLoading] = useState(true);
