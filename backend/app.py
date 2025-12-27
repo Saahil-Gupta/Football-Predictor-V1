@@ -8,17 +8,21 @@ import joblib
 from datetime import datetime
 import numpy as np
 import unicodedata
+import pandas as pd  # Explicitly importing pandas as it is used in predict_match_with_model
 
 # === Load Environment ===
 load_dotenv()
 API_TOKEN = os.getenv('FOOTBALL_API_KEY')
 API_URL = 'https://api.football-data.org/v4'
 CACHE = {}
+MATCHDAY_CACHE = {} # Specific cache for matchday info to prevent 429 errors
 
 # === Flask App Init ===
 app = Flask(__name__, static_folder='frontend_back/dist', static_url_path='')
 CORS(app)
 
+# === Load Models ===
+# Ensure these files exist in your directory
 laliga_model = joblib.load(r"laliga_match_predictor_advanced.pkl")
 print("La Liga model class order:", laliga_model.classes_)
 
@@ -149,13 +153,26 @@ STATIC_TEAMS = [
 ]
 
 def normalize_team_name(name):
+    # 1. Try direct map (Standard lookup)
     mapped = TEAM_NAME_MAP.get(name, name)
-    return unicodedata.normalize("NFKD", mapped).encode("ASCII", "ignore").decode("utf-8").strip()
+    
+    # 2. Normalize to remove accents
+    normalized = unicodedata.normalize("NFKD", mapped).encode("ASCII", "ignore").decode("utf-8").strip()
+    
+    # 3. SECONDARY MAPPING (The Fix for 'Club Atletico de Madrid')
+    retry_map = {
+        "Club Atletico de Madrid": "Atletico Madrid",
+        "Deportivo Alaves": "Alaves",
+        "Real Betis Balompie": "Betis",
+        "RCD Espanyol de Barcelona": "Espanyol",
+        "Rayo Vallecano de Madrid": "Rayo Vallecano",
+        "Real Sociedad de Futbol": "Real Sociedad",
+        "Athletic Club": "Athletic Club" 
+    }
+    
+    return retry_map.get(normalized, normalized)
 
 def predict_match_with_model(home_team, away_team, return_features=True, verbose=False, matchday=None, league_hint="laliga"):
-    import numpy as np
-    import pandas as pd
-
     home = normalize_team_name(home_team)
     away = normalize_team_name(away_team)
 
@@ -257,8 +274,6 @@ def predict_match_with_model(home_team, away_team, return_features=True, verbose
         return predicted_result, raw_probs.tolist(), home_avg_xg, away_avg_xg
 
 
-
-
 def format_date_nice(utc):
     dt = datetime.strptime(utc, "%Y-%m-%dT%H:%M:%SZ")
     day = dt.day
@@ -266,6 +281,14 @@ def format_date_nice(utc):
     return f"{day}{suffix} {dt.strftime('%B')}"
 
 def get_latest_matchday_fixtures(league='laliga'):
+    # 1. Check Cache First (Cache for 1 hour to avoid Rate Limit)
+    cache_key = f"matchday_info_{league}"
+    if cache_key in MATCHDAY_CACHE:
+        cached_data = MATCHDAY_CACHE[cache_key]
+        if (datetime.now() - cached_data['time']).total_seconds() < 3600:
+            print(f"[CACHE HIT] Using cached matchday for {league}")
+            return cached_data['fixtures'], cached_data['matchday']
+
     competition_id = {
         'laliga': '2014',
         'epl': '2021',
@@ -278,10 +301,11 @@ def get_latest_matchday_fixtures(league='laliga'):
 
     headers = {'X-Auth-Token': API_TOKEN}
 
+    # 2. Fetch Competition Info (1 API Call)
     comp_url = f"https://api.football-data.org/v4/competitions/{competition_id}"
     comp_resp = requests.get(comp_url, headers=headers)
     if comp_resp.status_code != 200:
-        print("Failed to fetch competition info:", comp_resp.status_code, comp_resp.text)
+        print(f"Failed to fetch competition info: {comp_resp.status_code} {comp_resp.text}")
         return [], None
 
     current_md = comp_resp.json().get("currentSeason", {}).get("currentMatchday")
@@ -291,6 +315,7 @@ def get_latest_matchday_fixtures(league='laliga'):
 
     print(f"League: {league} | Matchday: {current_md}")
 
+    # 3. Fetch Matches for that Matchday (1 API Call)
     matches_url = f"https://api.football-data.org/v4/competitions/{competition_id}/matches?matchday={current_md}"
     matches_resp = requests.get(matches_url, headers=headers)
     if matches_resp.status_code != 200:
@@ -304,7 +329,6 @@ def get_latest_matchday_fixtures(league='laliga'):
         home = m["homeTeam"]["name"]
         away = m["awayTeam"]["name"]
 
-        # 5-value return unpacking
         pred, conf, home_xg, away_xg, _ = predict_match_with_model(
             home, away, matchday=current_md, return_features=True
         )
@@ -333,9 +357,15 @@ def get_latest_matchday_fixtures(league='laliga'):
             "formatted_date": format_date_nice(m["utcDate"])
         })
 
+    # 4. Save to Cache
+    MATCHDAY_CACHE[cache_key] = {
+        'fixtures': result_list,
+        'matchday': current_md,
+        'time': datetime.now()
+    }
+    
     print(f"Fixtures returned: {len(result_list)}")
     return result_list, current_md
-
 
 
 def is_cache_valid(ts, seconds=300):
@@ -364,6 +394,7 @@ def api_epl_teams():
 def api_laliga_teams():
     return jsonify([t for t in STATIC_TEAMS if t['name'] in MODELS["laliga"]["strengths"]])
 
+# === API ENDPOINT: NEXT FIXTURES ===
 @app.route('/api/fixtures/next/<int:team_id>')
 def api_next(team_id):
     league = request.args.get("league", "laliga")
@@ -374,19 +405,33 @@ def api_next(team_id):
 
     print(f"[API CALL] /api/fixtures/next/{team_id}?league={league}")
 
+    # This call now uses the cached matchday info
     _, latest_matchday = get_latest_matchday_fixtures(league=league)
     if latest_matchday is None:
         return jsonify([])
 
     headers = {'X-Auth-Token': API_TOKEN}
-    res = requests.get(f"{API_URL}/teams/{team_id}/matches?status=SCHEDULED&limit=5", headers=headers)
+    
+    # Filter for specific League (2014=La Liga, 2021=EPL) to avoid CL/Cup games
+    comp_id = '2014' if league == 'laliga' else '2021'
+
+    # Fetch 10 matches (buffer) to ensure we find 5 valid ones after filtering unknowns
+    res = requests.get(f"{API_URL}/teams/{team_id}/matches?status=SCHEDULED&limit=10&competitions={comp_id}", headers=headers)
     fixtures = []
 
     if res.status_code == 200:
         for m in res.json().get("matches", []):
+            if len(fixtures) >= 5:
+                break
+
             pred, proba, home_xg, away_xg, _ = predict_match_with_model(
                 m["homeTeam"]["name"], m["awayTeam"]["name"], matchday=latest_matchday
             )
+            
+            # Skip games where model returns Unknown
+            if pred == "Unknown":
+                continue
+
             model = MODELS["laliga" if league == "laliga" else "prem"]["model"]
             confidence = dict(zip(model.classes_, proba))
             fixtures.append({
@@ -405,7 +450,7 @@ def api_next(team_id):
         CACHE[key] = {"data": fixtures, "time": datetime.now()}
     return jsonify(fixtures)
 
-
+# === API ENDPOINT: LAST RESULTS ===
 @app.route('/api/fixtures/last/<int:team_id>')
 def api_last(team_id):
     league = request.args.get("league", "laliga")
@@ -421,14 +466,24 @@ def api_last(team_id):
         return jsonify([])
 
     headers = {'X-Auth-Token': API_TOKEN}
-    res = requests.get(f"{API_URL}/teams/{team_id}/matches?status=FINISHED&limit=5", headers=headers)
+    comp_id = '2014' if league == 'laliga' else '2021'
+
+    # Fetch 10 matches buffer here too
+    res = requests.get(f"{API_URL}/teams/{team_id}/matches?status=FINISHED&limit=10&competitions={comp_id}", headers=headers)
     results = []
 
     if res.status_code == 200:
         for m in res.json().get("matches", []):
+            if len(results) >= 5:
+                break
+
             pred, proba, home_xg, away_xg, _ = predict_match_with_model(
                 m["homeTeam"]["name"], m["awayTeam"]["name"], matchday=latest_matchday
             )
+            
+            if pred == "Unknown":
+                continue
+
             model = MODELS["laliga" if league == "laliga" else "prem"]["model"]
             confidence = dict(zip(model.classes_, proba))
             ft = m["score"]["fullTime"]
@@ -461,7 +516,6 @@ def api_matchday():
 
     print(f"[API CALL] /api/fixtures/matchday?league={league}")
 
-    # This function already returns fixtures with predictions and formatted data
     fixtures, matchday_num = get_latest_matchday_fixtures(league=league)
 
     payload = {
@@ -522,4 +576,3 @@ if __name__ == '__main__':
 
     # Start Flask server
     app.run(debug=True)
-
